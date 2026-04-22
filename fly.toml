@@ -1,2 +1,0 @@
-[processes]
-app = "./server.x86_64 --headless"
