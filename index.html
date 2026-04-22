@@ -137,11 +137,77 @@ body {
 
 		<script src="index.js"></script>
 		<script>
-window.__GODOT_SPLIT_FILES__ = {
-	"index.pck": ["index.pck.part000", "index.pck.part001"],
-	"index.wasm": ["index.wasm.part000", "index.wasm.part001"],
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":26884720,"index.wasm":35649444},"focusCanvas":true,"gdextensionLibs":[]};
+
+// If your host/CDN has a per-file size cap (e.g. 20 MB), you can upload the big files as fixed-size parts
+// and let this page stitch them back together at runtime.
+//
+// Expected part filenames (next to this HTML):
+// - index.pck.part0, index.pck.part1, ...
+// - index.wasm.part0, index.wasm.part1, ...
+//
+// This is intentionally "hardcoded" (no generic splitter) to keep the page simple and predictable.
+const MAX_PART_BYTES = 20 * 1024 * 1024; // 20 MiB
+const FILE_PARTS = {
+	"index.pck": [
+		{ name: "index.pck.part00", size: MAX_PART_BYTES },
+		{ name: "index.pck.part01", size: GODOT_CONFIG.fileSizes["index.pck"] - MAX_PART_BYTES },
+	],
+	"index.wasm": [
+		{ name: "index.wasm.part00", size: MAX_PART_BYTES },
+		{ name: "index.wasm.part01", size: GODOT_CONFIG.fileSizes["index.wasm"] - MAX_PART_BYTES },
+	],
 };
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":26926256,"index.wasm":35649444},"focusCanvas":true,"gdextensionLibs":[],"splitFiles":window.__GODOT_SPLIT_FILES__};
+
+async function fetchConcatParts(parts) {
+	let total = 0;
+	const buffers = await Promise.all(parts.map(async (p) => {
+		const res = await fetch(p.name);
+		if (!res.ok) throw new Error(`Failed to fetch ${p.name}: ${res.status} ${res.statusText}`);
+		const buf = await res.arrayBuffer();
+		total += buf.byteLength;
+		return new Uint8Array(buf);
+	}));
+	const out = new Uint8Array(total);
+	let offset = 0;
+	for (const b of buffers) {
+		out.set(b, offset);
+		offset += b.byteLength;
+	}
+	return out.buffer;
+}
+
+// Intercept fetches for the big files and serve them by concatenating their part files.
+// If the part files don't exist, the original fetch will proceed (so local dev still works).
+(() => {
+	const originalFetch = window.fetch ? window.fetch.bind(window) : null;
+	if (!originalFetch) return;
+
+	window.fetch = async function (input, init) {
+		const url = (typeof input === "string") ? input : (input && input.url) ? input.url : "";
+		const base = url.split("#")[0].split("?")[0];
+		const filename = base.substring(base.lastIndexOf("/") + 1);
+		const parts = FILE_PARTS[filename];
+		if (!parts) return originalFetch(input, init);
+
+		// Quick probe so we don't pay the concat cost when part files aren't present.
+		const probe = await originalFetch(parts[0].name, { method: "HEAD" }).catch(() => null);
+		if (!probe || !probe.ok) return originalFetch(input, init);
+
+		const buf = await fetchConcatParts(parts);
+		const contentType = (filename.endsWith(".wasm"))
+			? "application/wasm"
+			: "application/octet-stream";
+		return new Response(buf, {
+			status: 200,
+			headers: {
+				"content-length": String(buf.byteLength),
+				"content-type": contentType,
+			},
+		});
+	};
+})();
+
 const engine = new Engine(GODOT_CONFIG);
 
 (function () {

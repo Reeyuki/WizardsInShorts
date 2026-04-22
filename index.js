@@ -13747,91 +13747,6 @@ const Preloader = /** @constructor */ function () { // eslint-disable-line no-un
 		});
 	}
 
-	function getSplitFilesManifest() {
-		if (typeof window === 'undefined') {
-			return null;
-		}
-		return window.__GODOT_SPLIT_FILES__ || null;
-	}
-
-	function loadFetchSplit(file, tracker, fileSize, parts, raw) {
-		tracker[file] = {
-			total: fileSize || 0,
-			loaded: 0,
-			done: false,
-		};
-		const stat = tracker[file];
-
-		function fetchPart(part) {
-			return fetch(part).then(function (response) {
-				if (!response.ok) {
-					return Promise.reject(new Error(`Failed loading file part '${part}' for '${file}'`));
-				}
-				if (!response.body || !response.body.getReader) {
-					// Fallback: no streaming support, but still keep overall accounting.
-					return response.arrayBuffer().then(function (buf) {
-						stat.loaded += buf.byteLength;
-						return buf;
-					});
-				}
-				const reader = response.body.getReader();
-				const chunks = [];
-				let received = 0;
-				return new Promise(function (resolve, reject) {
-					function pump() {
-						reader.read().then(function (result) {
-							if (result.done) {
-								resolve({ chunks: chunks, size: received });
-								return;
-							}
-							const value = result.value;
-							chunks.push(value);
-							received += value.byteLength;
-							stat.loaded += value.byteLength;
-							pump();
-						}).catch(reject);
-					}
-					pump();
-				}).then(function (res) {
-					// Flatten per-part chunks into a single ArrayBuffer for this part.
-					const out = new Uint8Array(res.size);
-					let off = 0;
-					res.chunks.forEach(function (u8) {
-						out.set(u8, off);
-						off += u8.byteLength;
-					});
-					return out.buffer;
-				});
-			});
-		}
-
-		// Download sequentially to avoid ballooning memory on big packs.
-		return parts.reduce(function (p, part) {
-			return p.then(function (buffers) {
-				return fetchPart(part).then(function (buf) {
-					buffers.push(buf);
-					return buffers;
-				});
-			});
-		}, Promise.resolve([])).then(function (buffers) {
-			const total = buffers.reduce(function (sum, b) { return sum + b.byteLength; }, 0);
-			const out = new Uint8Array(total);
-			let off = 0;
-			buffers.forEach(function (b) {
-				out.set(new Uint8Array(b), off);
-				off += b.byteLength;
-			});
-			stat.done = true;
-			if (raw) {
-				return Promise.resolve(new Response(out.buffer));
-			}
-			return out.buffer;
-		}).catch(function (err) {
-			stat.done = true;
-			return Promise.reject(err);
-		});
-	}
-
 	function retry(func, attempts = 1) {
 		function onerror(err) {
 			if (attempts <= 1) {
@@ -13889,10 +13804,6 @@ const Preloader = /** @constructor */ function () { // eslint-disable-line no-un
 	};
 
 	this.loadPromise = function (file, fileSize, raw = false) {
-		const manifest = getSplitFilesManifest();
-		if (manifest && manifest[file] && Array.isArray(manifest[file]) && manifest[file].length > 0) {
-			return retry(loadFetchSplit.bind(null, file, loadingFiles, fileSize, manifest[file], raw), DOWNLOAD_ATTEMPTS_MAX);
-		}
 		return retry(loadFetch.bind(null, file, loadingFiles, fileSize, raw), DOWNLOAD_ATTEMPTS_MAX);
 	};
 
