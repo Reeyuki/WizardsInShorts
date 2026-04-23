@@ -1,0 +1,1 @@
+split -b 20m -d --suffix-length=2 index.pck index.pck.part && split -b 20m -d --suffix-length=2 index.wasm index.wasm.part
